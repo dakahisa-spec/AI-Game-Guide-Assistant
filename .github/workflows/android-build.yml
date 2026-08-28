@@ -42,11 +42,21 @@ jobs:
         shell: bash
         run: |
           APK_PATH="$(find app/build/outputs/apk -type f -name '*.apk' | head -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "$APK_PATH"
           test -s "$APK_PATH"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
           unzip -t "$APK_PATH"
           unzip -l "$APK_PATH" | grep -q 'AndroidManifest.xml'
           mkdir -p verified-apk
+          "$AAPT" dump badging "$APK_PATH" | tee verified-apk/apk-badging.txt
+          grep -Fq "package: name='com.aigameguide.app'" verified-apk/apk-badging.txt
+          grep -Fq "sdkVersion:'28'" verified-apk/apk-badging.txt
+          grep -Fq "targetSdkVersion:'35'" verified-apk/apk-badging.txt
+          grep -Fq "launchable-activity: name='com.aigameguide.app.MainActivity'" verified-apk/apk-badging.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK_PATH" | tee verified-apk/apksigner-report.txt
           cp "$APK_PATH" verified-apk/AI-Game-Guide-Assistant-v0.1-debug.apk
           ls -lh verified-apk/AI-Game-Guide-Assistant-v0.1-debug.apk
           sha256sum verified-apk/AI-Game-Guide-Assistant-v0.1-debug.apk
@@ -55,6 +65,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AI-Game-Guide-Assistant-APK
-          path: verified-apk/AI-Game-Guide-Assistant-v0.1-debug.apk
+          path: verified-apk/
           if-no-files-found: error
           retention-days: 30
