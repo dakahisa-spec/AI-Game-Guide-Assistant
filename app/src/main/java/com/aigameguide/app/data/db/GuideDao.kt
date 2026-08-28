@@ -46,6 +46,54 @@ interface GuideDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveMemory(memory: GameMemoryEntity)
 
+    @Query("SELECT * FROM ai_providers ORDER BY displayName")
+    fun observeAiProviders(): Flow<List<AiProviderEntity>>
+
+    @Query("SELECT * FROM ai_providers WHERE providerId = :providerId LIMIT 1")
+    suspend fun getAiProvider(providerId: String): AiProviderEntity?
+
+    @Query("SELECT * FROM ai_models WHERE enabled = 1 ORDER BY favorite DESC, lastUsedAt DESC, providerId, costLevel")
+    fun observeAiModels(): Flow<List<AiModelEntity>>
+
+    @Query("SELECT * FROM ai_models WHERE enabled = 1")
+    suspend fun getEnabledAiModels(): List<AiModelEntity>
+
+    @Query("SELECT * FROM ai_models WHERE modelKey = :modelKey LIMIT 1")
+    suspend fun getAiModel(modelKey: String): AiModelEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAiProviders(items: List<AiProviderEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAiProviders(items: List<AiProviderEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAiModels(items: List<AiModelEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAiModels(items: List<AiModelEntity>)
+
+    @Query("UPDATE ai_models SET favorite = :favorite WHERE modelKey = :modelKey")
+    suspend fun setModelFavorite(modelKey: String, favorite: Boolean)
+
+    @Query("UPDATE ai_models SET lastUsedAt = :usedAt WHERE modelKey = :modelKey")
+    suspend fun markModelUsed(modelKey: String, usedAt: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM game_ai_preferences WHERE gameId = :gameId LIMIT 1")
+    suspend fun getGameAiPreference(gameId: Long): GameAiPreferenceEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveGameAiPreference(preference: GameAiPreferenceEntity)
+
+    @Query("SELECT * FROM ai_settings WHERE id = 1 LIMIT 1")
+    fun observeAiSettings(): Flow<AiSettingsEntity?>
+
+    @Query("SELECT * FROM ai_settings WHERE id = 1 LIMIT 1")
+    suspend fun getAiSettings(): AiSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveAiSettings(settings: AiSettingsEntity)
+
     @Transaction
     suspend fun saveAnswer(answer: GuideQuestionEntity, sources: List<WebSourceEntity>): Long {
         val id = insertMessage(answer)

@@ -6,13 +6,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.aigameguide.app.GuideApplication
 import com.aigameguide.app.data.db.GameEntity
+import com.aigameguide.app.data.db.AiModelEntity
+import com.aigameguide.app.data.db.AiProviderEntity
+import com.aigameguide.app.data.db.AiSettingsEntity
 import com.aigameguide.app.data.db.GuideQuestionEntity
+import com.aigameguide.app.data.ai.AUTO_MODEL_KEY
+import com.aigameguide.app.data.ai.AiUsageMode
+import com.aigameguide.app.data.ai.VisionUnsupportedException
 import com.aigameguide.app.data.model.GuideRequest
 import com.aigameguide.app.data.model.PlayStyle
 import com.aigameguide.app.data.model.SpoilerLevel
 import com.aigameguide.app.data.repository.GuideRepository
 import com.aigameguide.app.data.repository.ImageStore
-import com.aigameguide.app.data.security.AiSettings
 import com.aigameguide.app.data.security.ApiKeyVault
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,14 +33,24 @@ data class ComposerState(
     val imagePaths: List<String> = emptyList(),
     val isSending: Boolean = false,
     val error: String? = null,
-    val webSearch: Boolean = false
+    val webSearch: Boolean = false,
+    val temporaryModelKey: String? = null,
+    val showVisionModelAction: Boolean = false
+)
+
+data class AiUiState(
+    val providers: List<AiProviderEntity> = emptyList(),
+    val models: List<AiModelEntity> = emptyList(),
+    val globalSettings: AiSettingsEntity = AiSettingsEntity(),
+    val gameModelKey: String = AUTO_MODEL_KEY,
+    val statusMessage: String? = null,
+    val busyProviderId: String? = null
 )
 
 class GuideViewModel(
     private val repository: GuideRepository,
     private val imageStore: ImageStore,
-    private val keyVault: ApiKeyVault,
-    private val settings: AiSettings
+    private val keyVault: ApiKeyVault
 ) : ViewModel() {
     val games = repository.games.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedId = MutableStateFlow<Long?>(null)
@@ -49,13 +64,29 @@ class GuideViewModel(
 
     private val _composer = MutableStateFlow(ComposerState())
     val composer = _composer.asStateFlow()
-    val hasApiKey: Boolean get() = keyVault.hasKey()
-    val currentModel: String get() = settings.model
+    private val _gameModelKey = MutableStateFlow(AUTO_MODEL_KEY)
+    private val _statusMessage = MutableStateFlow<String?>(null)
+    private val _busyProvider = MutableStateFlow<String?>(null)
+    private val aiCatalog = combine(repository.aiProviders, repository.aiModels, repository.aiSettings) {
+            providers, models, appSettings -> Triple(providers, models, appSettings ?: AiSettingsEntity())
+    }
+    private val aiSelection = combine(_gameModelKey, _statusMessage, _busyProvider) {
+            gameModel, status, busy -> Triple(gameModel, status, busy)
+    }
+    val aiUi: StateFlow<AiUiState> = combine(aiCatalog, aiSelection) { catalog, selection ->
+        AiUiState(catalog.first, catalog.second, catalog.third, selection.first, selection.second, selection.third)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AiUiState())
 
     init {
         viewModelScope.launch {
             combine(games, selectedId) { list, id -> id == null && list.isNotEmpty() }.collect { shouldSelect ->
                 if (shouldSelect) selectedId.value = games.value.firstOrNull()?.id
+            }
+        }
+        viewModelScope.launch {
+            selectedGame.collect { game ->
+                _gameModelKey.value = game?.let { repository.gameModelKey(it.id) } ?: AUTO_MODEL_KEY
+                _composer.value = _composer.value.copy(temporaryModelKey = null)
             }
         }
     }
@@ -90,7 +121,53 @@ class GuideViewModel(
         _composer.value = _composer.value.copy(imagePaths = _composer.value.imagePaths - path)
     }
     fun setWebSearch(enabled: Boolean) { _composer.value = _composer.value.copy(webSearch = enabled) }
-    fun clearError() { _composer.value = _composer.value.copy(error = null) }
+    fun clearError() { _composer.value = _composer.value.copy(error = null, showVisionModelAction = false) }
+    fun setTemporaryModel(modelKey: String) {
+        _composer.value = _composer.value.copy(temporaryModelKey = modelKey, error = null, showVisionModelAction = false)
+    }
+    fun useAutoForCurrentQuestion() = setTemporaryModel(AUTO_MODEL_KEY)
+
+    fun saveGameModel(modelKey: String) {
+        val game = selectedGame.value ?: return
+        viewModelScope.launch {
+            repository.saveGameModel(game.id, modelKey)
+            _gameModelKey.value = modelKey
+            _composer.value = _composer.value.copy(temporaryModelKey = null)
+        }
+    }
+
+    fun toggleFavorite(model: AiModelEntity) = viewModelScope.launch { repository.toggleFavorite(model) }
+
+    fun saveGlobalAiSettings(defaultModelKey: String, usageMode: AiUsageMode) = viewModelScope.launch {
+        repository.saveGlobalAiSettings(defaultModelKey, usageMode.name)
+        _statusMessage.value = "AI 기본 설정을 저장했습니다."
+    }
+
+    fun saveProvider(providerId: String, baseUrl: String, apiKey: String, customModelId: String?) = viewModelScope.launch {
+        runCatching { repository.saveProvider(providerId, baseUrl, apiKey, customModelId) }
+            .onSuccess { _statusMessage.value = "Provider 설정을 저장했습니다." }
+            .onFailure { _statusMessage.value = it.message }
+    }
+
+    fun testProvider(providerId: String) = viewModelScope.launch {
+        _busyProvider.value = providerId
+        runCatching { repository.testProvider(providerId) }
+            .onSuccess { _statusMessage.value = it }
+            .onFailure { _statusMessage.value = it.message ?: "연결 테스트에 실패했습니다." }
+        _busyProvider.value = null
+    }
+
+    fun syncModels(providerId: String) = viewModelScope.launch {
+        _busyProvider.value = providerId
+        runCatching { repository.syncModels(providerId) }
+            .onSuccess { _statusMessage.value = "모델 목록 ${it}개를 확인했습니다." }
+            .onFailure { _statusMessage.value = it.message ?: "모델 목록을 가져오지 못했습니다." }
+        _busyProvider.value = null
+    }
+
+    fun hasProviderKey(providerId: String): Boolean = keyVault.hasKey(providerId)
+    fun maskedProviderKey(providerId: String): String? = keyVault.masked(providerId)
+    fun clearAiStatus() { _statusMessage.value = null }
 
     fun sendQuestion(text: String, hintStage: Int = 0) {
         val game = selectedGame.value ?: return
@@ -116,25 +193,24 @@ class GuideViewModel(
                         imagePaths = _composer.value.imagePaths,
                         hintStage = hintStage,
                         forceWebSearch = _composer.value.webSearch
-                    )
+                    ),
+                    temporaryModelKey = _composer.value.temporaryModelKey
                 )
             }.onSuccess {
                 _composer.value = ComposerState()
             }.onFailure { e ->
-                _composer.value = _composer.value.copy(isSending = false, error = e.message ?: "요청에 실패했습니다.")
+                _composer.value = _composer.value.copy(
+                    isSending = false,
+                    error = e.message ?: "요청에 실패했습니다.",
+                    showVisionModelAction = e is VisionUnsupportedException
+                )
             }
         }
-    }
-
-    fun saveAiSettings(apiKey: String, model: String) {
-        if (apiKey.isNotBlank()) keyVault.save(apiKey)
-        settings.model = model.ifBlank { "gpt-5.6" }
-        _composer.value = _composer.value.copy(error = null)
     }
 }
 
 class GuideViewModelFactory(private val app: GuideApplication) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        GuideViewModel(app.repository, app.imageStore, app.keyVault, app.aiSettings) as T
+        GuideViewModel(app.repository, app.imageStore, app.keyVault) as T
 }

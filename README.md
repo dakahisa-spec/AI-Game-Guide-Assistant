@@ -1,6 +1,6 @@
-# AI 게임 공략 비서 v0.1
+# AI 게임 공략 비서 v0.2
 
-Galaxy Z Fold 계열을 우선으로 설계한 로컬 우선 Android 게임 공략 앱입니다. 게임별 진행도와 대화를 Room에 저장하고, 최대 5장의 스크린샷과 질문을 OpenAI Responses API에 전달해 이미지 분석과 최신 웹 공략 검색을 함께 수행합니다.
+Galaxy Z Fold 계열을 우선으로 설계한 로컬 우선 Android 게임 공략 앱입니다. 게임별 진행도와 대화를 Room에 저장하고, 최대 5장의 스크린샷과 질문을 선택한 AI Provider에 전달해 맞춤 공략을 생성합니다.
 
 ## v0.1 구현 내용
 
@@ -16,22 +16,33 @@ Galaxy Z Fold 계열을 우선으로 설계한 로컬 우선 Android 게임 공�
 - API 키를 Android Keystore 기반 AES-GCM으로 암호화 저장
 - 인터넷이 없어도 게임 목록, 진행도, 이전 공략, 메모 조회 가능
 
+## v0.2 AI 모델 선택
+
+- OpenAI, Google Gemini, Anthropic Claude, OpenAI-compatible Provider 계층
+- 자동/빠름/균형/고성능 Capability 기반 라우팅과 자동 Fallback
+- 질문별 임시 모델, 게임별 기본 모델, 앱 전체 기본 모델 우선순위
+- 이미지·다중 이미지·웹 검색 지원 여부를 호출 전에 검사
+- 절약/균형/최고 품질 모드, 즐겨찾기, 최근 사용 모델
+- Provider API Key Keystore 암호화, Base URL·Model ID·연결 테스트·목록 동기화
+- 로컬 DB로 답할 수 있는 진행률 질문은 AI API를 호출하지 않음
+- Room v1→v2 명시적 Migration으로 기존 게임·진행도·공략 기록 보존
+
 ## 실행
 
 1. Android Studio에서 프로젝트 루트를 엽니다.
 2. JDK 17과 Android SDK 35를 설치합니다.
 3. Gradle 동기화 후 `app`을 실행합니다.
-4. 앱 오른쪽 위 설정에서 OpenAI API 키와 사용할 모델을 저장합니다.
+4. 앱 오른쪽 위 설정에서 사용할 Provider의 API 키와 기본 모델을 저장합니다.
 
-API 키는 소스나 `local.properties`에 넣지 않습니다. 기본 모델은 `gpt-5.6`이며 설정 화면에서 바꿀 수 있습니다. 웹 검색과 이미지 입력 형식은 OpenAI Responses API의 `input_image` 및 `web_search` 규격을 사용합니다.
+API 키는 소스나 `local.properties`에 넣지 않습니다. 기본값은 `자동`이며 모델 카탈로그는 한 곳에서 관리하고, 지원 Provider는 API에서 모델 목록을 동기화할 수 있습니다.
 
 ## 구조
 
 ```text
 app/src/main/java/com/aigameguide/app
 ├── data/db          Room Entity, DAO, Database
+├── data/ai          Provider, Gateway, Capability, 자동 모델 선택
 ├── data/model       플랫폼, 스포일러, 요청/응답 모델
-├── data/network     Responses API + 이미지 + 웹 검색
 ├── data/repository  로컬 저장과 AI 흐름 조합
 ├── data/security    Keystore API 키 보관
 ├── ui               Fold/폰 Compose UI

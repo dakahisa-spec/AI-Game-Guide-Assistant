@@ -24,7 +24,10 @@ data class GuideAnswer(
     val text: String,
     val sources: List<GuideSource>,
     val usedWeb: Boolean,
-    val progressUpdate: ProgressUpdate? = null
+    val progressUpdate: ProgressUpdate? = null,
+    val usedModelKey: String = "",
+    val usedModelName: String = "",
+    val autoSelectedModel: Boolean = false
 )
 
 data class ProgressUpdate(

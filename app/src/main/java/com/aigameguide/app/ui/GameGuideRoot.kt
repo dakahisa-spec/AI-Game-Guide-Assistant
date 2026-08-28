@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,6 +51,8 @@ import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -61,6 +65,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,6 +78,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -97,6 +103,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.aigameguide.app.R
 import com.aigameguide.app.data.db.GameEntity
@@ -105,6 +113,12 @@ import com.aigameguide.app.data.model.MessageRole
 import com.aigameguide.app.data.model.Platform
 import com.aigameguide.app.data.model.PlayStyle
 import com.aigameguide.app.data.model.SpoilerLevel
+import com.aigameguide.app.data.ai.AUTO_MODEL_KEY
+import com.aigameguide.app.data.ai.AiModelTier
+import com.aigameguide.app.data.ai.AiUsageMode
+import com.aigameguide.app.data.ai.tierValue
+import com.aigameguide.app.data.db.AiModelEntity
+import com.aigameguide.app.viewmodel.AiUiState
 import com.aigameguide.app.ui.theme.GuideBlue
 import com.aigameguide.app.ui.theme.GuidePink
 import com.aigameguide.app.ui.theme.GuidePurple
@@ -123,10 +137,12 @@ fun GameGuideRoot(vm: GuideViewModel) {
     val selected by vm.selectedGame.collectAsState()
     val messages by vm.messages.collectAsState()
     val composer by vm.composer.collectAsState()
+    val aiUi by vm.aiUi.collectAsState()
     var addDialog by rememberSaveable { mutableStateOf(false) }
     var settingsDialog by rememberSaveable { mutableStateOf(false) }
     var progressDialog by remember { mutableStateOf<GameEntity?>(null) }
     var phoneDetail by rememberSaveable { mutableStateOf(false) }
+    var modelPicker by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -173,12 +189,14 @@ fun GameGuideRoot(vm: GuideViewModel) {
                         color = MaterialTheme.colorScheme.surface
                     ) {
                         ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
-                            composer.webSearch, vm, onBack = null, onEdit = { progressDialog = it })
+                            composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
+                            aiUi, vm, onBack = null, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true })
                     }
                 }
             } else if (phoneDetail && selected != null) {
                 ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
-                    composer.webSearch, vm, onBack = { phoneDetail = false }, onEdit = { progressDialog = it },
+                    composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
+                    aiUi, vm, onBack = { phoneDetail = false }, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true },
                     modifier = Modifier.fillMaxSize())
             } else {
                 GameListPane(games, selected?.id, onAdd = { addDialog = true },
@@ -199,7 +217,15 @@ fun GameGuideRoot(vm: GuideViewModel) {
             vm.deleteGame(game.id); progressDialog = null; phoneDetail = false
         })
     }
-    if (settingsDialog) AiSettingsDialog(vm, onDismiss = { settingsDialog = false })
+    if (settingsDialog) AiSettingsDialog(vm, aiUi, onDismiss = { settingsDialog = false })
+    if (modelPicker) ModelPickerDialog(
+        aiUi = aiUi,
+        temporaryModelKey = composer.temporaryModelKey,
+        onDismiss = { modelPicker = false },
+        onTemporary = { vm.setTemporaryModel(it); modelPicker = false },
+        onGameDefault = { vm.saveGameModel(it); modelPicker = false },
+        onFavorite = vm::toggleFavorite
+    )
 }
 
 @Composable
@@ -311,7 +337,9 @@ private fun SmallAction(icon: androidx.compose.ui.graphics.vector.ImageVector, l
 @Composable
 private fun ChatPane(
     game: GameEntity?, messages: List<GuideQuestionEntity>, imagePaths: List<String>, sending: Boolean,
-    error: String?, webSearch: Boolean, vm: GuideViewModel, onBack: (() -> Unit)?, onEdit: (GameEntity) -> Unit,
+    error: String?, webSearch: Boolean, temporaryModelKey: String?, showVisionAction: Boolean,
+    aiUi: AiUiState, vm: GuideViewModel, onBack: (() -> Unit)?, onEdit: (GameEntity) -> Unit,
+    onModelPicker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (game == null) {
@@ -329,7 +357,10 @@ private fun ChatPane(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(game.name, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                SpoilerBadge(game.spoilerLevel)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    SpoilerBadge(game.spoilerLevel)
+                    AiModelPill(modelLabel(aiUi, temporaryModelKey), onModelPicker)
+                }
             }
             IconButton(onClick = { onEdit(game) }) { Icon(Icons.Rounded.Edit, "진행도 편집") }
         }
@@ -338,9 +369,9 @@ private fun ChatPane(
         else LazyColumn(
             state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) { items(messages, key = { it.id }) { MessageBubble(it) } }
-        error?.let { ErrorBar(it, vm::clearError) }
-        GuideComposer(game, imagePaths, sending, webSearch, vm)
+        ) { items(messages, key = { it.id }) { MessageBubble(it, aiUi.models) } }
+        error?.let { ErrorBar(it, vm::clearError, if (showVisionAction) vm::useAutoForCurrentQuestion else null) }
+        GuideComposer(game, imagePaths, sending, webSearch, modelLabel(aiUi, temporaryModelKey), onModelPicker, vm)
     }
 }
 
@@ -364,6 +395,26 @@ private fun SpoilerBadge(value: String) {
 }
 
 @Composable
+private fun AiModelPill(label: String, onClick: () -> Unit) {
+    Surface(
+        color = Color(0xFFF0ECFF), shape = RoundedCornerShape(9.dp),
+        modifier = Modifier.padding(top = 4.dp).clickable(onClick = onClick)
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.AutoAwesome, null, tint = GuidePurple, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp)); Text("$label ▾", color = GuidePurple, fontSize = 12.sp)
+        }
+    }
+}
+
+private fun modelLabel(aiUi: AiUiState, temporaryModelKey: String?): String {
+    val key = temporaryModelKey ?: aiUi.gameModelKey.takeIf { it != AUTO_MODEL_KEY }
+        ?: aiUi.globalSettings.defaultModelKey
+    if (key.isBlank() || key == AUTO_MODEL_KEY) return "자동"
+    return aiUi.models.firstOrNull { it.modelKey == key }?.displayName ?: "자동"
+}
+
+@Composable
 private fun WelcomeGuide(game: GameEntity, modifier: Modifier) {
     Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Rounded.AutoAwesome, null, tint = GuidePurple, modifier = Modifier.size(48.dp))
@@ -384,7 +435,7 @@ private fun WelcomeGuide(game: GameEntity, modifier: Modifier) {
 }
 
 @Composable
-private fun MessageBubble(message: GuideQuestionEntity) {
+private fun MessageBubble(message: GuideQuestionEntity, models: List<AiModelEntity>) {
     val user = message.role == MessageRole.USER.name
     var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
     val canExpand = !user && message.content.length > 520
@@ -415,6 +466,12 @@ private fun MessageBubble(message: GuideQuestionEntity) {
                     Text(if (expanded) "접기" else "자세히 보기")
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 9.dp), horizontalArrangement = Arrangement.End) {
+                    if (!user && message.actualModelKey.isNotBlank()) {
+                        val modelText = if (message.actualModelKey == "LOCAL") "로컬 DB"
+                        else models.firstOrNull { it.modelKey == message.actualModelKey }?.displayName ?: message.actualModelKey.substringAfter(':')
+                        Text(if (message.autoSelectedModel) "자동 선택 · $modelText" else "AI · $modelText", color = GuidePurple, fontSize = 11.sp)
+                        Spacer(Modifier.width(8.dp))
+                    }
                     if (message.usedWeb) {
                         Icon(Icons.Rounded.Language, null, tint = GuideBlue, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("웹 검증", color = GuideBlue, fontSize = 11.sp); Spacer(Modifier.width(8.dp))
                     }
@@ -426,17 +483,23 @@ private fun MessageBubble(message: GuideQuestionEntity) {
 }
 
 @Composable
-private fun ErrorBar(error: String, dismiss: () -> Unit) {
+private fun ErrorBar(error: String, dismiss: () -> Unit, useAuto: (() -> Unit)? = null) {
     Surface(color = Color(0xFFFFEDF3), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), shape = RoundedCornerShape(13.dp)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Column(Modifier.weight(1f)) {
+                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                if (useAuto != null) TextButton(onClick = useAuto, contentPadding = PaddingValues(0.dp)) { Text("자동 선택 사용") }
+            }
             IconButton(onClick = dismiss, modifier = Modifier.size(30.dp)) { Icon(Icons.Rounded.Close, null, tint = MaterialTheme.colorScheme.error) }
         }
     }
 }
 
 @Composable
-private fun GuideComposer(game: GameEntity, imagePaths: List<String>, sending: Boolean, webSearch: Boolean, vm: GuideViewModel) {
+private fun GuideComposer(
+    game: GameEntity, imagePaths: List<String>, sending: Boolean, webSearch: Boolean,
+    modelLabel: String, onModelPicker: () -> Unit, vm: GuideViewModel
+) {
     var text by rememberSaveable(game.id) { mutableStateOf("") }
     var attachMenu by remember { mutableStateOf(false) }
     var pendingCameraPath by remember { mutableStateOf<String?>(null) }
@@ -464,6 +527,7 @@ private fun GuideComposer(game: GameEntity, imagePaths: List<String>, sending: B
                 }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                item { AssistChip(onClick = onModelPicker, label = { Text("AI: $modelLabel ▾") }, leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(16.dp)) }) }
                 item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 1만 줘", 1) }, label = { Text("힌트 1") }) }
                 item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 2를 줘", 2) }, label = { Text("힌트 2") }) }
                 item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 3을 줘", 3) }, label = { Text("힌트 3") }) }
@@ -570,21 +634,208 @@ private fun ProgressDialog(game: GameEntity, onDismiss: () -> Unit, onSave: (Gam
 }
 
 @Composable
-private fun AiSettingsDialog(vm: GuideViewModel, onDismiss: () -> Unit) {
-    var key by remember { mutableStateOf("") }
-    var model by remember { mutableStateOf(vm.currentModel) }
+private fun ModelPickerDialog(
+    aiUi: AiUiState,
+    temporaryModelKey: String?,
+    onDismiss: () -> Unit,
+    onTemporary: (String) -> Unit,
+    onGameDefault: (String) -> Unit,
+    onFavorite: (AiModelEntity) -> Unit
+) {
+    var providerId by rememberSaveable { mutableStateOf(aiUi.providers.firstOrNull()?.providerId ?: "openai") }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 980.dp).heightIn(max = 760.dp),
+            shape = RoundedCornerShape(26.dp), color = Color.White, shadowElevation = 16.dp
+        ) {
+            BoxWithConstraints {
+                val wide = maxWidth >= 700.dp
+                Column(Modifier.padding(22.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("AI 모델 선택", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("공략 질문과 이미지 분석에 사용할 AI를 선택하세요.", color = Color.Gray, fontSize = 13.sp)
+                        }
+                        IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "닫기") }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    if (wide) {
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            ProviderColumn(aiUi, providerId, { providerId = it }, Modifier.width(220.dp).fillMaxHeight())
+                            ModelColumn(aiUi, providerId, temporaryModelKey, onTemporary, onGameDefault, onFavorite, Modifier.weight(1f))
+                        }
+                    } else {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(aiUi.providers) { provider ->
+                                FilterChip(selected = provider.providerId == providerId, onClick = { providerId = provider.providerId }, label = { Text(provider.displayName) })
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        ModelColumn(aiUi, providerId, temporaryModelKey, onTemporary, onGameDefault, onFavorite, Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderColumn(aiUi: AiUiState, selected: String, onSelect: (String) -> Unit, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("AI Provider", fontWeight = FontWeight.Bold, color = GuidePurple, modifier = Modifier.padding(6.dp))
+        aiUi.providers.forEach { provider ->
+            FilledTonalButton(
+                onClick = { onSelect(provider.providerId) }, modifier = Modifier.fillMaxWidth(),
+                colors = if (selected == provider.providerId) androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFFE8E7FF)) else androidx.compose.material3.ButtonDefaults.filledTonalButtonColors()
+            ) { Text(provider.displayName, modifier = Modifier.fillMaxWidth()) }
+        }
+    }
+}
+
+@Composable
+private fun ModelColumn(
+    aiUi: AiUiState, providerId: String, temporaryModelKey: String?,
+    onTemporary: (String) -> Unit, onGameDefault: (String) -> Unit,
+    onFavorite: (AiModelEntity) -> Unit, modifier: Modifier
+) {
+    val recent = aiUi.models.filter { it.lastUsedAt > 0 }.sortedByDescending { it.lastUsedAt }.take(5)
+    val models = aiUi.models.filter { it.providerId == providerId }
+        .sortedWith(compareByDescending<AiModelEntity> { it.favorite }.thenBy { it.costLevel })
+    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF1EEFF)),
+                border = if ((temporaryModelKey ?: aiUi.gameModelKey) == AUTO_MODEL_KEY) BorderStroke(1.5.dp, GuidePurple) else null,
+                shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = GuidePurple)
+                    Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) {
+                        Text("자동 추천", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("질문 종류와 비용 설정에 맞는 모델을 자동 선택합니다.", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = { onTemporary(AUTO_MODEL_KEY) }) { Text("이번 질문") }
+                    TextButton(onClick = { onGameDefault(AUTO_MODEL_KEY) }) { Text("게임 기본") }
+                }
+            }
+        }
+        if (recent.isNotEmpty()) item {
+            Text("최근 사용 · ${recent.joinToString(" · ") { it.displayName }}", color = GuidePurple, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+        items(models, key = { it.modelKey }) { model ->
+            AiModelCard(model, onTemporary, onGameDefault, onFavorite)
+        }
+        if (models.isEmpty()) item {
+            Text("이 Provider의 모델이 없습니다. AI 설정에서 모델 목록을 새로고침하세요.", color = Color.Gray, modifier = Modifier.padding(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun AiModelCard(
+    model: AiModelEntity,
+    onTemporary: (String) -> Unit,
+    onGameDefault: (String) -> Unit,
+    onFavorite: (AiModelEntity) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, SoftBorder),
+        colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(15.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(model.displayName, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(model.description, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+                }
+                IconButton(onClick = { onFavorite(model) }) {
+                    Icon(if (model.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, "즐겨찾기", tint = if (model.favorite) Color(0xFFFFB000) else Color.Gray)
+                }
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 9.dp)) {
+                item { CapabilityBadge(model.tierValue().badge) }
+                if (model.supportsVision) item { CapabilityBadge("🖼 이미지") }
+                if (model.supportsWebSearch) item { CapabilityBadge("🔎 웹 검색") }
+                item { CapabilityBadge("비용 ${levelLabel(model.costLevel)}") }
+            }
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onTemporary(model.modelKey) }) { Text("이 질문에만") }
+                Spacer(Modifier.width(7.dp))
+                Button(onClick = { onGameDefault(model.modelKey) }) { Text("게임 기본") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityBadge(text: String) {
+    Surface(color = Color(0xFFF4F3FA), shape = RoundedCornerShape(9.dp)) {
+        Text(text, fontSize = 11.sp, color = Color(0xFF5D5968), modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp))
+    }
+}
+
+private fun levelLabel(level: Int) = when (level) { 1 -> "낮음"; 3 -> "높음"; else -> "보통" }
+
+@Composable
+private fun AiSettingsDialog(vm: GuideViewModel, aiUi: AiUiState, onDismiss: () -> Unit) {
+    var providerId by rememberSaveable { mutableStateOf(aiUi.providers.firstOrNull()?.providerId ?: "openai") }
+    val provider = aiUi.providers.firstOrNull { it.providerId == providerId }
+    var key by remember(providerId) { mutableStateOf("") }
+    var baseUrl by remember(providerId, provider?.baseUrl) { mutableStateOf(provider?.baseUrl.orEmpty()) }
+    var customModelId by remember(providerId) { mutableStateOf("") }
+    var usage by remember(aiUi.globalSettings.usageMode) {
+        mutableStateOf(runCatching { AiUsageMode.valueOf(aiUi.globalSettings.usageMode) }.getOrDefault(AiUsageMode.BALANCED))
+    }
+    var defaultModel by remember(aiUi.globalSettings.defaultModelKey) { mutableStateOf(aiUi.globalSettings.defaultModelKey) }
+    var modelMenu by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("AI 연결 설정", fontWeight = FontWeight.Bold) },
+        title = { Text("AI 설정", fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (vm.hasApiKey) "API 키가 안전하게 저장되어 있습니다." else "AI 공략을 사용하려면 OpenAI API 키가 필요합니다.", color = if (vm.hasApiKey) GuideBlue else Color.Gray)
-                OutlinedTextField(key, { key = it }, label = { Text(if (vm.hasApiKey) "새 키로 변경 (선택)" else "OpenAI API 키") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(model, { model = it }, label = { Text("모델") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("키는 Android Keystore로 암호화되며 앱 코드와 Room DB에는 저장되지 않습니다.", fontSize = 12.sp, color = Color.Gray)
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                item {
+                    Text("AI 사용 방식", fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        items(AiUsageMode.entries) { item -> FilterChip(selected = usage == item, onClick = { usage = item }, label = { Text(item.label) }) }
+                    }
+                }
+                item {
+                    Text("전체 기본 모델", fontWeight = FontWeight.Bold)
+                    Box {
+                        OutlinedButton(onClick = { modelMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (defaultModel == AUTO_MODEL_KEY) "자동" else aiUi.models.firstOrNull { it.modelKey == defaultModel }?.displayName ?: "자동")
+                        }
+                        DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                            DropdownMenuItem(text = { Text("자동") }, onClick = { defaultModel = AUTO_MODEL_KEY; modelMenu = false })
+                            aiUi.models.forEach { model -> DropdownMenuItem(text = { Text("${model.displayName} · ${model.providerId}") }, onClick = { defaultModel = model.modelKey; modelMenu = false }) }
+                        }
+                    }
+                }
+                item {
+                    Text("Provider 설정", fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        items(aiUi.providers) { item -> FilterChip(selected = providerId == item.providerId, onClick = { providerId = item.providerId }, label = { Text(item.displayName) }) }
+                    }
+                }
+                item {
+                    val masked = vm.maskedProviderKey(providerId)
+                    Text(masked?.let { "저장된 키: $it" } ?: "API Key가 저장되지 않았습니다.", color = if (masked != null) GuideBlue else Color.Gray, fontSize = 13.sp)
+                }
+                item { OutlinedTextField(key, { key = it }, label = { Text("API Key ${if (vm.hasProviderKey(providerId)) "변경 (선택)" else ""}") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth()) }
+                item { OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+                if (providerId == "compatible") item { OutlinedTextField(customModelId, { customModelId = it }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        OutlinedButton(onClick = { vm.saveProvider(providerId, baseUrl, key, customModelId.takeIf { it.isNotBlank() }) }) { Text("API 설정 저장") }
+                        OutlinedButton(onClick = { vm.testProvider(providerId) }, enabled = aiUi.busyProviderId == null) { Text("연결 테스트") }
+                        OutlinedButton(onClick = { vm.syncModels(providerId) }, enabled = aiUi.busyProviderId == null) { Text("모델 새로고침") }
+                    }
+                }
+                aiUi.statusMessage?.let { message -> item { Text(message, color = GuidePurple, fontSize = 13.sp) } }
+                item { Text("API Key는 Android Keystore로 암호화되며 전체 값은 다시 표시하지 않습니다.", fontSize = 12.sp, color = Color.Gray) }
             }
         },
-        confirmButton = { Button(onClick = { vm.saveAiSettings(key, model); onDismiss() }, enabled = vm.hasApiKey || key.isNotBlank()) { Text("저장") } },
+        confirmButton = { Button(onClick = { vm.saveGlobalAiSettings(defaultModel, usage); onDismiss() }) { Text("기본 설정 저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("닫기") } }
     )
 }
