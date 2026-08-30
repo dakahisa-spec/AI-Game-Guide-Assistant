@@ -141,6 +141,7 @@ fun GameGuideRoot(
     val messages by vm.messages.collectAsState()
     val composer by vm.composer.collectAsState()
     val aiUi by vm.aiUi.collectAsState()
+    val activeGame = selected
     var addDialog by rememberSaveable { mutableStateOf(false) }
     var settingsDialog by rememberSaveable { mutableStateOf(false) }
     var progressDialog by remember { mutableStateOf<GameEntity?>(null) }
@@ -164,8 +165,8 @@ fun GameGuideRoot(
         if (measured > 14.dp) measured else 14.dp
     } else 14.dp
 
-    LaunchedEffect(twoPane, selected?.id) {
-        if (twoPane && selected != null) phoneDetail = true
+    LaunchedEffect(twoPane, activeGame?.id) {
+        if (twoPane && activeGame != null) phoneDetail = true
     }
 
     Scaffold(
@@ -201,7 +202,7 @@ fun GameGuideRoot(
                         border = BorderStroke(1.dp, SoftBorder),
                         color = MaterialTheme.colorScheme.surface
                     ) {
-                        GameListPane(games, selected?.id, onAdd = { addDialog = true }, onSelect = vm::selectGame,
+                        GameListPane(games, activeGame?.id, onAdd = { addDialog = true }, onSelect = vm::selectGame,
                             onQuestion = vm::selectGame, onProgress = { progressDialog = it })
                     }
                     Spacer(Modifier.width(hingeGap))
@@ -211,23 +212,23 @@ fun GameGuideRoot(
                         border = BorderStroke(1.dp, SoftBorder),
                         color = MaterialTheme.colorScheme.surface
                     ) {
-                        if (selected == null) {
+                        if (activeGame == null) {
                             EmptyDetailPane(onAdd = { addDialog = true })
                         } else {
-                            ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
+                            ChatPane(activeGame, messages, composer.imagePaths, composer.isSending, composer.error,
                                 composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
                                 aiUi, vm, onBack = null, onEdit = { progressDialog = it },
                                 onModelPicker = { modelPicker = true }, expandedLayout = true)
                         }
                     }
                 }
-            } else if (phoneDetail && selected != null) {
-                ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
+            } else if (phoneDetail && activeGame != null) {
+                ChatPane(activeGame, messages, composer.imagePaths, composer.isSending, composer.error,
                     composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
                     aiUi, vm, onBack = { phoneDetail = false }, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true },
                     expandedLayout = false, modifier = Modifier.fillMaxSize())
             } else {
-                GameListPane(games, selected?.id, onAdd = { addDialog = true },
+                GameListPane(games, activeGame?.id, onAdd = { addDialog = true },
                     onSelect = { vm.selectGame(it); phoneDetail = true },
                     onQuestion = { vm.selectGame(it); phoneDetail = true },
                     onProgress = { progressDialog = it }, modifier = Modifier.fillMaxSize())
