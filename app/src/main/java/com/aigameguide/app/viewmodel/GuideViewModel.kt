@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.Serializable
+import java.io.File
 
 data class ComposerState(
     val imagePaths: List<String> = emptyList(),
@@ -110,17 +111,30 @@ class GuideViewModel(
     }
 
     fun importImages(uris: List<Uri>) = viewModelScope.launch {
+        if (uris.isEmpty()) return@launch
         val remaining = 5 - _composer.value.imagePaths.size
         if (remaining <= 0) return@launch
         val paths = imageStore.importUris(uris.take(remaining))
-        _composer.value = _composer.value.copy(imagePaths = (_composer.value.imagePaths + paths).take(5), error = null)
+        _composer.value = if (paths.isEmpty()) {
+            _composer.value.copy(error = "이미지를 가져오지 못했습니다. 갤러리 또는 파일 선택으로 다시 시도해 주세요.")
+        } else {
+            _composer.value.copy(imagePaths = (_composer.value.imagePaths + paths).take(5), error = null)
+        }
     }
 
-    fun createCameraTarget(): Pair<Uri, String> = imageStore.newCameraTarget()
+    fun createCameraTarget(): Pair<Uri, String>? = runCatching { imageStore.newCameraTarget() }
+        .onFailure { reportImageError("카메라 저장 위치를 만들지 못했습니다.") }
+        .getOrNull()
     fun acceptCameraPath(path: String) {
-        if (_composer.value.imagePaths.size < 5) {
-            _composer.value = _composer.value.copy(imagePaths = _composer.value.imagePaths + path)
+        val image = File(path)
+        if (!image.exists() || image.length() == 0L) {
+            reportImageError("촬영한 사진을 저장하지 못했습니다.")
+        } else if (_composer.value.imagePaths.size < 5) {
+            _composer.value = _composer.value.copy(imagePaths = _composer.value.imagePaths + path, error = null)
         }
+    }
+    fun reportImageError(message: String) {
+        _composer.value = _composer.value.copy(error = message)
     }
     fun removeImage(path: String) {
         _composer.value = _composer.value.copy(imagePaths = _composer.value.imagePaths - path)

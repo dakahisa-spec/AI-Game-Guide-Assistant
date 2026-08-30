@@ -53,14 +53,14 @@ jobs:
           mkdir -p verified-apk
           "$AAPT" dump badging "$APK_PATH" | tee verified-apk/apk-badging.txt
           grep -Fq "package: name='com.aigameguide.app'" verified-apk/apk-badging.txt
-          grep -Fq "versionName='0.3.0'" verified-apk/apk-badging.txt
+          grep -Fq "versionName='0.3.1'" verified-apk/apk-badging.txt
           grep -Fq "sdkVersion:'28'" verified-apk/apk-badging.txt
           grep -Fq "targetSdkVersion:'35'" verified-apk/apk-badging.txt
           grep -Fq "launchable-activity: name='com.aigameguide.app.MainActivity'" verified-apk/apk-badging.txt
           "$APKSIGNER" verify --verbose --print-certs "$APK_PATH" | tee verified-apk/apksigner-report.txt
-          cp "$APK_PATH" verified-apk/AI-Game-Guide-Assistant-v0.3-debug.apk
-          ls -lh verified-apk/AI-Game-Guide-Assistant-v0.3-debug.apk
-          sha256sum verified-apk/AI-Game-Guide-Assistant-v0.3-debug.apk
+          cp "$APK_PATH" verified-apk/AI-Game-Guide-Assistant-v0.3.1-debug.apk
+          ls -lh verified-apk/AI-Game-Guide-Assistant-v0.3.1-debug.apk
+          sha256sum verified-apk/AI-Game-Guide-Assistant-v0.3.1-debug.apk
 
       - name: Upload verified APK
         uses: actions/upload-artifact@v4

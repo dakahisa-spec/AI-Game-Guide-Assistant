@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -71,6 +73,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -147,6 +150,7 @@ fun GameGuideRoot(
     var progressDialog by remember { mutableStateOf<GameEntity?>(null) }
     var phoneDetail by rememberSaveable { mutableStateOf(false) }
     var modelPicker by rememberSaveable { mutableStateOf(false) }
+    var galleryRequestGameId by rememberSaveable { mutableStateOf<Long?>(null) }
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val foldingFeature = windowLayoutInfo?.displayFeatures
@@ -203,7 +207,9 @@ fun GameGuideRoot(
                         color = MaterialTheme.colorScheme.surface
                     ) {
                         GameListPane(games, activeGame?.id, onAdd = { addDialog = true }, onSelect = vm::selectGame,
-                            onQuestion = vm::selectGame, onProgress = { progressDialog = it })
+                            onQuestion = vm::selectGame,
+                            onScreenshot = { gameId -> vm.selectGame(gameId); galleryRequestGameId = gameId },
+                            onProgress = { progressDialog = it })
                     }
                     Spacer(Modifier.width(hingeGap))
                     Surface(
@@ -218,7 +224,9 @@ fun GameGuideRoot(
                             ChatPane(activeGame, messages, composer.imagePaths, composer.isSending, composer.error,
                                 composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
                                 aiUi, vm, onBack = null, onEdit = { progressDialog = it },
-                                onModelPicker = { modelPicker = true }, expandedLayout = true)
+                                onModelPicker = { modelPicker = true }, expandedLayout = true,
+                                launchGallery = galleryRequestGameId == activeGame.id,
+                                onGalleryLaunched = { galleryRequestGameId = null })
                         }
                     }
                 }
@@ -226,11 +234,17 @@ fun GameGuideRoot(
                 ChatPane(activeGame, messages, composer.imagePaths, composer.isSending, composer.error,
                     composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
                     aiUi, vm, onBack = { phoneDetail = false }, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true },
-                    expandedLayout = false, modifier = Modifier.fillMaxSize())
+                    expandedLayout = false, launchGallery = galleryRequestGameId == activeGame.id,
+                    onGalleryLaunched = { galleryRequestGameId = null }, modifier = Modifier.fillMaxSize())
             } else {
                 GameListPane(games, activeGame?.id, onAdd = { addDialog = true },
                     onSelect = { vm.selectGame(it); phoneDetail = true },
                     onQuestion = { vm.selectGame(it); phoneDetail = true },
+                    onScreenshot = { gameId ->
+                        vm.selectGame(gameId)
+                        phoneDetail = true
+                        galleryRequestGameId = gameId
+                    },
                     onProgress = { progressDialog = it }, modifier = Modifier.fillMaxSize())
             }
         }
@@ -261,7 +275,8 @@ fun GameGuideRoot(
 @Composable
 private fun GameListPane(
     games: List<GameEntity>, selectedId: Long?, onAdd: () -> Unit, onSelect: (Long) -> Unit,
-    onQuestion: (Long) -> Unit, onProgress: (GameEntity) -> Unit, modifier: Modifier = Modifier
+    onQuestion: (Long) -> Unit, onScreenshot: (Long) -> Unit,
+    onProgress: (GameEntity) -> Unit, modifier: Modifier = Modifier
 ) {
     var search by rememberSaveable { mutableStateOf("") }
     Column(modifier.padding(18.dp)) {
@@ -284,7 +299,14 @@ private fun GameListPane(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f)) {
                 items(filtered, key = { it.id }) { game ->
-                    GameCard(game, game.id == selectedId, { onSelect(game.id) }, { onQuestion(game.id) }, { onProgress(game) })
+                    GameCard(
+                        game = game,
+                        selected = game.id == selectedId,
+                        onClick = { onSelect(game.id) },
+                        onQuestion = { onQuestion(game.id) },
+                        onScreenshot = { onScreenshot(game.id) },
+                        onProgress = { onProgress(game) }
+                    )
                 }
             }
         }
@@ -333,7 +355,14 @@ private fun EmptyDetailPane(onAdd: () -> Unit) {
 }
 
 @Composable
-private fun GameCard(game: GameEntity, selected: Boolean, onClick: () -> Unit, onQuestion: () -> Unit, onProgress: () -> Unit) {
+private fun GameCard(
+    game: GameEntity,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onQuestion: () -> Unit,
+    onScreenshot: () -> Unit,
+    onProgress: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(21.dp),
@@ -362,7 +391,7 @@ private fun GameCard(game: GameEntity, selected: Boolean, onClick: () -> Unit, o
             Spacer(Modifier.height(13.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmallAction(Icons.Rounded.AutoAwesome, "공략 질문", onQuestion, Modifier.weight(1f))
-                SmallAction(Icons.Rounded.Image, "스크린샷", onQuestion, Modifier.weight(1f))
+                SmallAction(Icons.Rounded.Image, "스크린샷", onScreenshot, Modifier.weight(1f))
                 SmallAction(Icons.Rounded.BarChart, "진행도", onProgress, Modifier.weight(1f))
             }
         }
@@ -393,12 +422,15 @@ private fun ChatPane(
     game: GameEntity, messages: List<GuideQuestionEntity>, imagePaths: List<String>, sending: Boolean,
     error: String?, webSearch: Boolean, temporaryModelKey: String?, showVisionAction: Boolean,
     aiUi: AiUiState, vm: GuideViewModel, onBack: (() -> Unit)?, onEdit: (GameEntity) -> Unit,
-    onModelPicker: () -> Unit, expandedLayout: Boolean,
+    onModelPicker: () -> Unit, expandedLayout: Boolean, launchGallery: Boolean,
+    onGalleryLaunched: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberSaveable(game.id, saver = LazyListState.Saver) { LazyListState() }
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Box(modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.fillMaxHeight().fillMaxWidth().widthIn(max = 960.dp)) {
             Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "뒤로") }
@@ -414,7 +446,7 @@ private fun ChatPane(
                 IconButton(onClick = { onEdit(game) }) { Icon(Icons.Rounded.Edit, "진행도 편집") }
             }
             HorizontalDivider(color = SoftBorder)
-            if (expandedLayout) ExpandedProgressSummary(game)
+            if (expandedLayout && !imeVisible) ExpandedProgressSummary(game)
             if (messages.isEmpty()) WelcomeGuide(game, Modifier.weight(1f))
             else LazyColumn(
                 state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -422,7 +454,11 @@ private fun ChatPane(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) { items(messages, key = { it.id }) { MessageBubble(it, aiUi.models) } }
             error?.let { ErrorBar(it, vm::clearError, if (showVisionAction) vm::useAutoForCurrentQuestion else null) }
-            GuideComposer(game, imagePaths, sending, webSearch, modelLabel(aiUi, temporaryModelKey), onModelPicker, vm)
+            GuideComposer(
+                game, imagePaths, sending, webSearch, modelLabel(aiUi, temporaryModelKey),
+                onModelPicker, vm, compactForIme = imeVisible, launchGallery = launchGallery,
+                onGalleryLaunched = onGalleryLaunched
+            )
         }
     }
 }
@@ -584,22 +620,31 @@ private fun ErrorBar(error: String, dismiss: () -> Unit, useAuto: (() -> Unit)? 
 @Composable
 private fun GuideComposer(
     game: GameEntity, imagePaths: List<String>, sending: Boolean, webSearch: Boolean,
-    modelLabel: String, onModelPicker: () -> Unit, vm: GuideViewModel
+    modelLabel: String, onModelPicker: () -> Unit, vm: GuideViewModel,
+    compactForIme: Boolean, launchGallery: Boolean, onGalleryLaunched: () -> Unit
 ) {
     var text by rememberSaveable(game.id) { mutableStateOf("") }
     var attachMenu by remember { mutableStateOf(false) }
     var pendingCameraPath by remember { mutableStateOf<String?>(null) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris -> vm.importImages(uris) }
+    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> vm.importImages(uris) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         if (ok) pendingCameraPath?.let(vm::acceptCameraPath)
+        else vm.reportImageError("촬영이 취소되었거나 사진을 저장하지 못했습니다.")
         pendingCameraPath = null
     }
+    LaunchedEffect(launchGallery) {
+        if (launchGallery) {
+            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            onGalleryLaunched()
+        }
+    }
     Surface(
-        modifier = Modifier.fillMaxWidth().imePadding(), color = Color(0xFFFCFBFF),
+        modifier = Modifier.fillMaxWidth(), color = Color(0xFFFCFBFF),
         shadowElevation = 8.dp
     ) {
         Column(Modifier.padding(12.dp)) {
-            if (imagePaths.isNotEmpty()) {
+            if (imagePaths.isNotEmpty() && !compactForIme) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
                     items(imagePaths) { path ->
                         Box {
@@ -612,16 +657,27 @@ private fun GuideComposer(
                     if (imagePaths.size < 5) item { Text("${imagePaths.size}/5", color = Color.Gray, modifier = Modifier.padding(20.dp, 4.dp)) }
                 }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                item { AssistChip(onClick = onModelPicker, label = { Text("AI: $modelLabel ▾") }, leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(16.dp)) }) }
-                item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 1만 줘", 1) }, label = { Text("힌트 1") }) }
-                item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 2를 줘", 2) }, label = { Text("힌트 2") }) }
-                item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 3을 줘", 3) }, label = { Text("힌트 3") }) }
-                item { AssistChip(onClick = { vm.sendQuestion("정답과 정확한 해결 순서를 알려줘", 4) }, label = { Text("🏆 정답 보기") }) }
+            if (!compactForIme) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                    item { AssistChip(onClick = onModelPicker, label = { Text("AI: $modelLabel ▾") }, leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(16.dp)) }) }
+                    item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 1만 줘", 1) }, label = { Text("힌트 1") }) }
+                    item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 2를 줘", 2) }, label = { Text("힌트 2") }) }
+                    item { AssistChip(onClick = { vm.sendQuestion("현재 화면과 진행 상황을 기준으로 힌트 3을 줘", 3) }, label = { Text("힌트 3") }) }
+                    item { AssistChip(onClick = { vm.sendQuestion("정답과 정확한 해결 순서를 알려줘", 4) }, label = { Text("🏆 정답 보기") }) }
+                }
             }
             OutlinedTextField(
                 value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("여기서 뭐 해야 돼?") }, shape = RoundedCornerShape(19.dp), maxLines = 4,
+                placeholder = { Text("여기서 뭐 해야 돼?") }, shape = RoundedCornerShape(19.dp),
+                minLines = 1, maxLines = if (compactForIme) 2 else 4,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    cursorColor = GuideBlue,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) { vm.sendQuestion(text); text = "" } }),
                 trailingIcon = {
@@ -638,9 +694,12 @@ private fun GuideComposer(
                         DropdownMenuItem(text = { Text("갤러리·최근 스크린샷") }, leadingIcon = { Icon(Icons.Rounded.PhotoLibrary, null) }, onClick = {
                             attachMenu = false; photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         })
+                        DropdownMenuItem(text = { Text("파일에서 이미지 선택") }, leadingIcon = { Icon(Icons.Rounded.Image, null) }, onClick = {
+                            attachMenu = false; documentPicker.launch(arrayOf("image/*"))
+                        })
                         DropdownMenuItem(text = { Text("카메라 촬영") }, leadingIcon = { Icon(Icons.Rounded.CameraAlt, null) }, onClick = {
                             attachMenu = false
-                            val (uri, path) = vm.createCameraTarget(); pendingCameraPath = path; camera.launch(uri)
+                            vm.createCameraTarget()?.let { (uri, path) -> pendingCameraPath = path; camera.launch(uri) }
                         })
                     }
                 }
