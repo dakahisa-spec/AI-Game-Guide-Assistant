@@ -13,8 +13,8 @@ android {
         applicationId = "com.aigameguide.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -52,8 +52,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3:1.3.2")
+    implementation("androidx.compose.material3:material3-window-size-class:1.3.2")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.foundation:foundation-layout")
+    implementation("androidx.window:window:1.4.0")
 
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")

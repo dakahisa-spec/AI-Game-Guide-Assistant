@@ -1,9 +1,12 @@
 package com.aigameguide.app.viewmodel
 
 import android.net.Uri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.CreationExtras
 import com.aigameguide.app.GuideApplication
 import com.aigameguide.app.data.db.GameEntity
 import com.aigameguide.app.data.db.AiModelEntity
@@ -28,6 +31,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.Serializable
 
 data class ComposerState(
     val imagePaths: List<String> = emptyList(),
@@ -36,7 +40,7 @@ data class ComposerState(
     val webSearch: Boolean = false,
     val temporaryModelKey: String? = null,
     val showVisionModelAction: Boolean = false
-)
+) : Serializable
 
 data class AiUiState(
     val providers: List<AiProviderEntity> = emptyList(),
@@ -50,10 +54,11 @@ data class AiUiState(
 class GuideViewModel(
     private val repository: GuideRepository,
     private val imageStore: ImageStore,
-    private val keyVault: ApiKeyVault
+    private val keyVault: ApiKeyVault,
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     val games = repository.games.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    private val selectedId = MutableStateFlow<Long?>(null)
+    private val selectedId = savedStateHandle.getMutableStateFlow<Long?>("selected_game_id", null)
     val selectedGame: StateFlow<GameEntity?> = combine(games, selectedId) { list, id ->
         list.firstOrNull { it.id == id } ?: list.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -62,7 +67,7 @@ class GuideViewModel(
         if (game == null) flowOf(emptyList()) else repository.messages(game.id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _composer = MutableStateFlow(ComposerState())
+    private val _composer = savedStateHandle.getMutableStateFlow("composer_state", ComposerState())
     val composer = _composer.asStateFlow()
     private val _gameModelKey = MutableStateFlow(AUTO_MODEL_KEY)
     private val _statusMessage = MutableStateFlow<String?>(null)
@@ -211,6 +216,6 @@ class GuideViewModel(
 
 class GuideViewModelFactory(private val app: GuideApplication) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        GuideViewModel(app.repository, app.imageStore, app.keyVault) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
+        GuideViewModel(app.repository, app.imageStore, app.keyVault, extras.createSavedStateHandle()) as T
 }

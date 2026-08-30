@@ -1,16 +1,13 @@
 package com.aigameguide.app.ui
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,9 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -71,6 +68,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -78,14 +76,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -94,7 +92,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -105,6 +104,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.window.layout.FoldingFeature
+import androidx.window.layout.WindowLayoutInfo
 import coil.compose.AsyncImage
 import com.aigameguide.app.R
 import com.aigameguide.app.data.db.GameEntity
@@ -114,7 +115,6 @@ import com.aigameguide.app.data.model.Platform
 import com.aigameguide.app.data.model.PlayStyle
 import com.aigameguide.app.data.model.SpoilerLevel
 import com.aigameguide.app.data.ai.AUTO_MODEL_KEY
-import com.aigameguide.app.data.ai.AiModelTier
 import com.aigameguide.app.data.ai.AiUsageMode
 import com.aigameguide.app.data.ai.tierValue
 import com.aigameguide.app.data.db.AiModelEntity
@@ -128,11 +128,14 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GameGuideRoot(vm: GuideViewModel) {
+fun GameGuideRoot(
+    vm: GuideViewModel,
+    windowSizeClass: WindowSizeClass,
+    windowLayoutInfo: WindowLayoutInfo?
+) {
     val games by vm.games.collectAsState()
     val selected by vm.selectedGame.collectAsState()
     val messages by vm.messages.collectAsState()
@@ -143,6 +146,27 @@ fun GameGuideRoot(vm: GuideViewModel) {
     var progressDialog by remember { mutableStateOf<GameEntity?>(null) }
     var phoneDetail by rememberSaveable { mutableStateOf(false) }
     var modelPicker by rememberSaveable { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val foldingFeature = windowLayoutInfo?.displayFeatures
+        ?.filterIsInstance<FoldingFeature>()
+        ?.firstOrNull()
+    val hasVerticalFold = foldingFeature?.orientation == FoldingFeature.Orientation.VERTICAL
+    val mediumOrExpanded = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
+    val twoPane = AdaptiveLayoutPolicy.shouldUseTwoPane(
+        widthDp = configuration.screenWidthDp,
+        mediumOrExpandedWindow = mediumOrExpanded,
+        hasVerticalFoldingFeature = hasVerticalFold
+    )
+    val listPaneFraction = AdaptiveLayoutPolicy.listPaneFraction(configuration.screenWidthDp)
+    val hingeGap = if (hasVerticalFold && foldingFeature?.isSeparating == true) {
+        val measured = with(density) { foldingFeature.bounds.width().toDp() }
+        if (measured > 14.dp) measured else 14.dp
+    } else 14.dp
+
+    LaunchedEffect(twoPane, selected?.id) {
+        if (twoPane && selected != null) phoneDetail = true
+    }
 
     Scaffold(
         topBar = {
@@ -168,12 +192,11 @@ fun GameGuideRoot(vm: GuideViewModel) {
             )
         }
     ) { inner ->
-        BoxWithConstraints(Modifier.fillMaxSize().padding(inner)) {
-            val twoPane = maxWidth >= 720.dp
+        Box(Modifier.fillMaxSize().padding(inner)) {
             if (twoPane) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp)) {
                     Surface(
-                        modifier = Modifier.weight(0.39f).fillMaxHeight(),
+                        modifier = Modifier.weight(listPaneFraction).fillMaxHeight(),
                         shape = RoundedCornerShape(24.dp),
                         border = BorderStroke(1.dp, SoftBorder),
                         color = MaterialTheme.colorScheme.surface
@@ -181,23 +204,28 @@ fun GameGuideRoot(vm: GuideViewModel) {
                         GameListPane(games, selected?.id, onAdd = { addDialog = true }, onSelect = vm::selectGame,
                             onQuestion = vm::selectGame, onProgress = { progressDialog = it })
                     }
-                    Spacer(Modifier.width(14.dp))
+                    Spacer(Modifier.width(hingeGap))
                     Surface(
-                        modifier = Modifier.weight(0.61f).fillMaxHeight(),
+                        modifier = Modifier.weight(1f - listPaneFraction).fillMaxHeight(),
                         shape = RoundedCornerShape(24.dp),
                         border = BorderStroke(1.dp, SoftBorder),
                         color = MaterialTheme.colorScheme.surface
                     ) {
-                        ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
-                            composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
-                            aiUi, vm, onBack = null, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true })
+                        if (selected == null) {
+                            EmptyDetailPane(onAdd = { addDialog = true })
+                        } else {
+                            ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
+                                composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
+                                aiUi, vm, onBack = null, onEdit = { progressDialog = it },
+                                onModelPicker = { modelPicker = true }, expandedLayout = true)
+                        }
                     }
                 }
             } else if (phoneDetail && selected != null) {
                 ChatPane(selected, messages, composer.imagePaths, composer.isSending, composer.error,
                     composer.webSearch, composer.temporaryModelKey, composer.showVisionModelAction,
                     aiUi, vm, onBack = { phoneDetail = false }, onEdit = { progressDialog = it }, onModelPicker = { modelPicker = true },
-                    modifier = Modifier.fillMaxSize())
+                    expandedLayout = false, modifier = Modifier.fillMaxSize())
             } else {
                 GameListPane(games, selected?.id, onAdd = { addDialog = true },
                     onSelect = { vm.selectGame(it); phoneDetail = true },
@@ -218,9 +246,10 @@ fun GameGuideRoot(vm: GuideViewModel) {
         })
     }
     if (settingsDialog) AiSettingsDialog(vm, aiUi, onDismiss = { settingsDialog = false })
-    if (modelPicker) ModelPickerDialog(
+    if (modelPicker) ModelPickerSurface(
         aiUi = aiUi,
         temporaryModelKey = composer.temporaryModelKey,
+        expandedLayout = twoPane,
         onDismiss = { modelPicker = false },
         onTemporary = { vm.setTemporaryModel(it); modelPicker = false },
         onGameDefault = { vm.saveGameModel(it); modelPicker = false },
@@ -274,6 +303,30 @@ private fun EmptyGames(onAdd: () -> Unit, modifier: Modifier = Modifier) {
         Text("진행도를 기억하고 스크린샷으로 공략해 드려요", color = Color.Gray, modifier = Modifier.padding(top = 7.dp))
         Button(onClick = onAdd, modifier = Modifier.padding(top = 20.dp).height(52.dp), shape = RoundedCornerShape(16.dp)) {
             Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("첫 게임 등록")
+        }
+    }
+}
+
+@Composable
+private fun EmptyDetailPane(onAdd: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            Modifier.size(86.dp).clip(CircleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFFE6F7FF), Color(0xFFECE4FF)))),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Rounded.AutoAwesome, null, tint = GuidePurple, modifier = Modifier.size(42.dp))
+        }
+        Text("게임을 선택하고 AI 공략을 시작하세요", fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 18.dp))
+        Text("왼쪽 목록에서 게임을 선택하거나 새 게임을 등록할 수 있습니다.", color = Color.Gray, modifier = Modifier.padding(top = 7.dp))
+        Button(onClick = onAdd, modifier = Modifier.padding(top = 20.dp).height(52.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(Icons.Rounded.Add, null)
+            Spacer(Modifier.width(8.dp))
+            Text("게임 등록")
         }
     }
 }
@@ -336,42 +389,74 @@ private fun SmallAction(icon: androidx.compose.ui.graphics.vector.ImageVector, l
 
 @Composable
 private fun ChatPane(
-    game: GameEntity?, messages: List<GuideQuestionEntity>, imagePaths: List<String>, sending: Boolean,
+    game: GameEntity, messages: List<GuideQuestionEntity>, imagePaths: List<String>, sending: Boolean,
     error: String?, webSearch: Boolean, temporaryModelKey: String?, showVisionAction: Boolean,
     aiUi: AiUiState, vm: GuideViewModel, onBack: (() -> Unit)?, onEdit: (GameEntity) -> Unit,
-    onModelPicker: () -> Unit,
+    onModelPicker: () -> Unit, expandedLayout: Boolean,
     modifier: Modifier = Modifier
 ) {
-    if (game == null) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("왼쪽에서 게임을 선택하세요", color = Color.Gray, fontSize = 18.sp)
-        }
-        return
-    }
-    val listState = rememberLazyListState()
+    val listState = rememberSaveable(game.id, saver = LazyListState.Saver) { LazyListState() }
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
-    Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "뒤로") }
-            GameCoverSmall(game)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(game.name, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SpoilerBadge(game.spoilerLevel)
-                    AiModelPill(modelLabel(aiUi, temporaryModelKey), onModelPicker)
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.fillMaxHeight().fillMaxWidth().widthIn(max = 960.dp)) {
+            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "뒤로") }
+                GameCoverSmall(game)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(game.name, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SpoilerBadge(game.spoilerLevel)
+                        AiModelPill(modelLabel(aiUi, temporaryModelKey), onModelPicker)
+                    }
                 }
+                IconButton(onClick = { onEdit(game) }) { Icon(Icons.Rounded.Edit, "진행도 편집") }
             }
-            IconButton(onClick = { onEdit(game) }) { Icon(Icons.Rounded.Edit, "진행도 편집") }
+            HorizontalDivider(color = SoftBorder)
+            if (expandedLayout) ExpandedProgressSummary(game)
+            if (messages.isEmpty()) WelcomeGuide(game, Modifier.weight(1f))
+            else LazyColumn(
+                state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = if (expandedLayout) 24.dp else 14.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) { items(messages, key = { it.id }) { MessageBubble(it, aiUi.models) } }
+            error?.let { ErrorBar(it, vm::clearError, if (showVisionAction) vm::useAutoForCurrentQuestion else null) }
+            GuideComposer(game, imagePaths, sending, webSearch, modelLabel(aiUi, temporaryModelKey), onModelPicker, vm)
         }
-        HorizontalDivider(color = SoftBorder)
-        if (messages.isEmpty()) WelcomeGuide(game, Modifier.weight(1f))
-        else LazyColumn(
-            state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) { items(messages, key = { it.id }) { MessageBubble(it, aiUi.models) } }
-        error?.let { ErrorBar(it, vm::clearError, if (showVisionAction) vm::useAutoForCurrentQuestion else null) }
-        GuideComposer(game, imagePaths, sending, webSearch, modelLabel(aiUi, temporaryModelKey), onModelPicker, vm)
+    }
+}
+
+@Composable
+private fun ExpandedProgressSummary(game: GameEntity) {
+    val remaining = if (game.progressPercent in 1..99 && game.playHours > 0f) {
+        val estimate = game.playHours * (100 - game.progressPercent) / game.progressPercent
+        val low = (estimate * 0.85f).toInt().coerceAtLeast(1)
+        val high = (estimate * 1.15f).toInt().coerceAtLeast(low + 1)
+        "$low~${high}시간"
+    } else "계산 전"
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7F6FF)),
+        border = BorderStroke(1.dp, Color(0xFFE6E2FF))
+    ) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ProgressMetric("진행률", "${game.progressPercent}%", Modifier.weight(0.8f))
+            ProgressMetric("예상 남은 시간", remaining, Modifier.weight(1f))
+            ProgressMetric(
+                "현재 진행",
+                game.mainQuest.ifBlank { game.chapter.ifBlank { "입력 전" } },
+                Modifier.weight(1.35f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProgressMetric(label: String, value: String, modifier: Modifier) {
+    Column(modifier) {
+        Text(label, color = Color(0xFF777483), fontSize = 12.sp)
+        Text(value, color = GuidePurple, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -447,7 +532,7 @@ private fun MessageBubble(message: GuideQuestionEntity, models: List<AiModelEnti
             Spacer(Modifier.width(8.dp))
         }
         Card(
-            modifier = Modifier.fillMaxWidth(if (user) 0.80f else 0.92f),
+            modifier = Modifier.fillMaxWidth(if (user) 0.80f else 0.92f).widthIn(max = 760.dp),
             colors = CardDefaults.cardColors(containerColor = if (user) Color(0xFFE8EAFF) else Color.White),
             shape = RoundedCornerShape(20.dp),
             border = if (user) null else BorderStroke(1.dp, SoftBorder),
@@ -633,49 +718,61 @@ private fun ProgressDialog(game: GameEntity, onDismiss: () -> Unit, onSave: (Gam
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelPickerDialog(
+private fun ModelPickerSurface(
     aiUi: AiUiState,
     temporaryModelKey: String?,
+    expandedLayout: Boolean,
     onDismiss: () -> Unit,
     onTemporary: (String) -> Unit,
     onGameDefault: (String) -> Unit,
     onFavorite: (AiModelEntity) -> Unit
 ) {
     var providerId by rememberSaveable { mutableStateOf(aiUi.providers.firstOrNull()?.providerId ?: "openai") }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 980.dp).heightIn(max = 760.dp),
-            shape = RoundedCornerShape(26.dp), color = Color.White, shadowElevation = 16.dp
-        ) {
-            BoxWithConstraints {
-                val wide = maxWidth >= 700.dp
+    if (expandedLayout) {
+        Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 1_020.dp).heightIn(max = 780.dp),
+                shape = RoundedCornerShape(28.dp), color = Color.White, shadowElevation = 16.dp
+            ) {
                 Column(Modifier.padding(22.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("AI 모델 선택", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-                            Text("공략 질문과 이미지 분석에 사용할 AI를 선택하세요.", color = Color.Gray, fontSize = 13.sp)
-                        }
-                        IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "닫기") }
-                    }
+                    ModelPickerHeader(onDismiss)
                     Spacer(Modifier.height(14.dp))
-                    if (wide) {
-                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            ProviderColumn(aiUi, providerId, { providerId = it }, Modifier.width(220.dp).fillMaxHeight())
-                            ModelColumn(aiUi, providerId, temporaryModelKey, onTemporary, onGameDefault, onFavorite, Modifier.weight(1f))
-                        }
-                    } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(aiUi.providers) { provider ->
-                                FilterChip(selected = provider.providerId == providerId, onClick = { providerId = provider.providerId }, label = { Text(provider.displayName) })
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
+                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        ProviderColumn(aiUi, providerId, { providerId = it }, Modifier.width(230.dp).fillMaxHeight())
                         ModelColumn(aiUi, providerId, temporaryModelKey, onTemporary, onGameDefault, onFavorite, Modifier.weight(1f))
                     }
                 }
             }
         }
+    } else {
+        ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.88f).padding(horizontal = 18.dp)) {
+                ModelPickerHeader(onDismiss)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 12.dp)) {
+                    items(aiUi.providers) { provider ->
+                        FilterChip(
+                            selected = provider.providerId == providerId,
+                            onClick = { providerId = provider.providerId },
+                            label = { Text(provider.displayName) }
+                        )
+                    }
+                }
+                ModelColumn(aiUi, providerId, temporaryModelKey, onTemporary, onGameDefault, onFavorite, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelPickerHeader(onDismiss: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("AI 모델 선택", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+            Text("공략 질문과 이미지 분석에 사용할 AI를 선택하세요.", color = Color.Gray, fontSize = 13.sp)
+        }
+        IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "닫기") }
     }
 }
 

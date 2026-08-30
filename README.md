@@ -1,4 +1,4 @@
-# AI 게임 공략 비서 v0.2
+# AI 게임 공략 비서 v0.3
 
 Galaxy Z Fold 계열을 우선으로 설계한 로컬 우선 Android 게임 공략 앱입니다. 게임별 진행도와 대화를 Room에 저장하고, 최대 5장의 스크린샷과 질문을 선택한 AI Provider에 전달해 맞춤 공략을 생성합니다.
 
@@ -26,6 +26,17 @@ Galaxy Z Fold 계열을 우선으로 설계한 로컬 우선 Android 게임 공�
 - Provider API Key Keystore 암호화, Base URL·Model ID·연결 테스트·목록 동기화
 - 로컬 DB로 답할 수 있는 진행률 질문은 AI API를 호출하지 않음
 - Room v1→v2 명시적 Migration으로 기존 게임·진행도·공략 기록 보존
+
+## v0.3 Galaxy Z Fold8 Adaptive UI
+
+- Material 3 WindowSizeClass와 Jetpack WindowManager `FoldingFeature` 기반 화면 전환
+- Fold8 펼친 화면은 게임 목록 36~40% + 공략 채팅 60~64% List-Detail 구성
+- 분리 힌지가 있는 기기에서는 힌지 폭을 콘텐츠 간격으로 반영
+- 접은 화면은 게임 목록과 채팅이 자연스럽게 전환되는 1열 UI
+- 대화 패널 읽기 너비 제한, 펼친 화면 진행률·남은 시간·현재 진행 요약 카드
+- 펼친 화면 AI 모델 선택은 Provider/모델 2열, 접은 화면은 1열 Bottom Sheet
+- 선택 게임·첨부 이미지·임시 AI 모델·웹 검색 상태를 `SavedStateHandle`로 보존
+- 화면 변경 후에도 질문 입력과 게임별 채팅 스크롤 위치 유지
 
 ## 실행
 
